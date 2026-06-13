@@ -18,10 +18,9 @@ void ANBGameModeBase::OnPostLogin(AController* NewPlayer)
 		AllPlayerControllers.Add(NBPlayerController);
 
 		ANBPlayerState* NBPS = NBPlayerController->GetPlayerState<ANBPlayerState>();
-		NBPS->InitializeState(0, TargetMatchCount);
-
 		if (IsValid(NBPS))
 		{
+			NBPS->InitializeState(0, TargetMatchCount);
 			NBPS->PlayerNameString = TEXT("Player") + FString::FromInt(AllPlayerControllers.Num());
 		}
 
@@ -52,7 +51,7 @@ void ANBGameModeBase::Logout(AController* Exiting)
 
 		if (bIsGameRunning && GameControllers.Num() < 2)
 		{
-			GetWorldTimerManager().ClearTimer(GameTimerHandle);
+			ClearTurnTimer();
 			for (auto& NBPC : GameControllers)
 			{
 				if (NBPC)
@@ -60,8 +59,7 @@ void ANBGameModeBase::Logout(AController* Exiting)
 					NBPC->NotificationText = FText::FromString(TEXT("상대방이 탈주하여 승리했습니다!"));
 				}
 			}
-
-			ResetGame();
+			OnEndTimer();
 			return;
 		}
 
@@ -79,10 +77,9 @@ void ANBGameModeBase::Logout(AController* Exiting)
 					CurrentTurnIndex = 0;
 				}
 
-				TurnTimeLeft = 10;
-				StartGameTimer();
+				OnTurnTimer();
 
-				AdvanceToNextTurn(TEXT("현재 턴 플레이어가 퇴장하여 턴이 넘어갑니다."));
+				NotifyTurnChange(TEXT("현재 턴 플레이어가 퇴장하여 턴이 넘어갑니다."));
 			}
 		}
 	}
@@ -91,8 +88,6 @@ void ANBGameModeBase::Logout(AController* Exiting)
 void ANBGameModeBase::BeginPlay()
 {
 	Super::BeginPlay();
-
-	TurnTimeLeft = SetTurnTimeLeft;
 }
 
 void ANBGameModeBase::ProcessPlayerInput(ANBPlayerController* InChatPlayerController, const FString& InChatMessageString)
@@ -109,11 +104,7 @@ void ANBGameModeBase::ProcessPlayerInput(ANBPlayerController* InChatPlayerContro
 
 		if (CountCheck(InChatPlayerController))
 		{
-			GetWorldTimerManager().ClearTimer(GameTimerHandle);
-
-			TurnTimeLeft = SetTurnTimeLeft;
-
-			StartGameTimer();
+			OnTurnTimer();
 
 			FString CheckNumberMatchString = CheckNumberMatch(InChatPlayerController, BaseballNumber, InChatMessageString);
 			int32 StrikeCount = FCString::Atoi(*CheckNumberMatchString.Left(1));
@@ -172,7 +163,7 @@ FString ANBGameModeBase::GenerateBaseballNumber()
 		Numbers.RemoveAt(Index);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("%s"),*Result);
+	UE_LOG(LogTemp, Log, TEXT("%s"), *Result);
 
 	return Result;
 }
@@ -234,7 +225,7 @@ FString ANBGameModeBase::CheckNumberMatch(ANBPlayerController* InChatPlayerContr
 	{
 		return TEXT("0 OUT");
 	}
-	
+
 	return FString::Printf(TEXT("%dS %dB"), StrikeCount, BallCount);
 }
 
@@ -272,6 +263,7 @@ void ANBGameModeBase::CheckGame(ANBPlayerController* InChatPlayerController, int
 {
 	if (InStrikeCount == TargetMatchCount)
 	{
+		ClearTurnTimer();
 		ANBPlayerState* NBPS = InChatPlayerController->GetPlayerState<ANBPlayerState>();
 		for (const auto& NBPC : GameControllers)
 		{
@@ -279,9 +271,9 @@ void ANBGameModeBase::CheckGame(ANBPlayerController* InChatPlayerController, int
 			{
 				FString CombinedMessageString = NBPS->GetPlayerNameString() + TEXT(" 승리!");
 				NBPC->NotificationText = FText::FromString(CombinedMessageString);
-				ResetGame();
 			}
 		}
+		OnEndTimer();
 	}
 	else
 	{
@@ -300,26 +292,51 @@ void ANBGameModeBase::CheckGame(ANBPlayerController* InChatPlayerController, int
 
 		if (bIsDraw)
 		{
+			ClearTurnTimer();
 			for (const auto& NBPC : AllPlayerControllers)
 			{
 				NBPC->NotificationText = FText::FromString(TEXT("무승부!"));
 
-				ResetGame();
 			}
+			OnEndTimer();
 		}
 		else
 		{
 			CurrentTurnIndex = (CurrentTurnIndex + 1) % GameControllers.Num();
-			AdvanceToNextTurn();
+			NotifyTurnChange();
 		}
 	}
 }
 
-void ANBGameModeBase::StartGameTimer()
+void ANBGameModeBase::OnTurnTimer()
 {
-	if (!GetWorldTimerManager().IsTimerActive(GameTimerHandle))
+	if (ANBGameStateBase* GS = GetGameState<ANBGameStateBase>())
 	{
-		GetWorldTimerManager().SetTimer(GameTimerHandle, this, &ANBGameModeBase::OnTimerTick, 1.f, true);
+		GS->StartTurnTimer(TurnTimeLeft);
+	}
+}
+
+void ANBGameModeBase::ClearTurnTimer()
+{
+	if (ANBGameStateBase* GS = GetGameState<ANBGameStateBase>())
+	{
+		GS->ClearTurnTimer();
+	}
+}
+
+void ANBGameModeBase::OnStartTimer()
+{
+	if (ANBGameStateBase* GS = GetGameState<ANBGameStateBase>())
+	{
+		GS->GameStartTimer(GameStartTime);
+	}
+}
+
+void ANBGameModeBase::OnEndTimer()
+{
+	if (ANBGameStateBase* GS = GetGameState<ANBGameStateBase>())
+	{
+		GS->GameEndTimer(GameEndTime);
 	}
 }
 
@@ -341,13 +358,8 @@ void ANBGameModeBase::CheckAndTryStartGame()
 				NBPC->NotificationText = FText::FromString(TEXT("인원이 충족되어 게임이 시작됩니다!"));
 			}
 		}
-		CurrentTurnIndex = 0;
 
-		BaseballNumber = GenerateBaseballNumber();
-		TurnTimeLeft = SetTurnTimeLeft;
-		StartGameTimer();
-
-		AdvanceToNextTurn();
+		OnStartTimer();
 	}
 	else
 	{
@@ -361,7 +373,18 @@ void ANBGameModeBase::CheckAndTryStartGame()
 	}
 }
 
-void ANBGameModeBase::AdvanceToNextTurn(const FString& PrefixMessage)
+void ANBGameModeBase::GameStart()
+{
+	CurrentTurnIndex = 0;
+
+	BaseballNumber = GenerateBaseballNumber();
+
+	OnTurnTimer();
+
+	NotifyTurnChange();
+}
+
+void ANBGameModeBase::NotifyTurnChange(const FString& PrefixMessage)
 {
 	if (GameControllers.IsEmpty()) return;
 
@@ -393,26 +416,7 @@ void ANBGameModeBase::OnTurnTimeout()
 
 	CurrentTurnIndex = (CurrentTurnIndex + 1) % GameControllers.Num();
 
-	TurnTimeLeft = SetTurnTimeLeft;
+	OnTurnTimer();
 
-	StartGameTimer();
-
-	AdvanceToNextTurn(TEXT("시간 초과! 턴이 넘어갑니다."));
-}
-
-void ANBGameModeBase::OnTimerTick()
-{
-	TurnTimeLeft--;
-
-	if (ANBGameStateBase* NBGS = GetGameState<ANBGameStateBase>())
-	{
-		NBGS->SetServerRemainingTime(TurnTimeLeft);
-	}
-
-	if (TurnTimeLeft <= 0)
-	{
-		GetWorldTimerManager().ClearTimer(GameTimerHandle);
-
-		OnTurnTimeout();
-	}
+	NotifyTurnChange(TEXT("시간 초과! 턴이 넘어갑니다."));
 }

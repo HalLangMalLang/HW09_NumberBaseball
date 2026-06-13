@@ -5,6 +5,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Player/NBPlayerState.h"
 #include "Player/NBPlayerController.h"
+#include "Game/NBGameModeBase.h"
 #include "Net/UnrealNetwork.h" 
 
 ANBGameStateBase::ANBGameStateBase()
@@ -38,24 +39,77 @@ void ANBGameStateBase::ResetPlayersCurrentCount()
 	}
 }
 
-void ANBGameStateBase::OnRep_ServerRemainingTime()
+void ANBGameStateBase::OnTurnTimerTick()
 {
-	if (ANBPlayerController* LocalPC = Cast<ANBPlayerController>(GetWorld()->GetFirstPlayerController()))
+	TurnTimeLeft--;
+
+	if (TurnTimeLeft <= 0)
 	{
-		LocalPC->TimerText = FText::FromString(FString::Printf(TEXT("남은 시간 : %d"), ServerTurnTimeLeft));
+		GetWorldTimerManager().ClearTimer(TurnTimerHandle);
+		if (ANBGameModeBase* GM = GetWorld()->GetAuthGameMode<ANBGameModeBase>())
+		{
+			GM->OnTurnTimeout();
+		}
 	}
 }
 
-void ANBGameStateBase::SetServerRemainingTime(int32 InRemainingTime)
+void ANBGameStateBase::OnGameStartTimer()
 {
-	ServerTurnTimeLeft = InRemainingTime;
+	if (ANBGameModeBase* GM = GetWorld()->GetAuthGameMode<ANBGameModeBase>())
+	{
+		GM->GameStart();
+	}
+}
 
-	OnRep_ServerRemainingTime();
+void ANBGameStateBase::OnGameEndTimer()
+{
+	if (ANBGameModeBase* GM = GetWorld()->GetAuthGameMode<ANBGameModeBase>())
+	{
+		GM->ResetGame();
+	}
+}
+
+void ANBGameStateBase::OnRep_TurnTimeLeft()
+{
+	if (ANBPlayerController* LocalPC = Cast<ANBPlayerController>(GetWorld()->GetFirstPlayerController()))
+	{
+		LocalPC->TimerText = FText::FromString(FString::Printf(TEXT("남은 시간 : %d"), TurnTimeLeft));
+	}
+}
+
+void ANBGameStateBase::StartTurnTimer(int SetTimerValue)
+{
+	if (HasAuthority() && !GetWorldTimerManager().IsTimerActive(TurnTimerHandle))
+	{
+		TurnTimeLeft = SetTimerValue;
+		GetWorldTimerManager().SetTimer(TurnTimerHandle, this, &ANBGameStateBase::OnTurnTimerTick, 1.f, true);
+	}
+}
+
+void ANBGameStateBase::ClearTurnTimer()
+{
+	GetWorldTimerManager().ClearTimer(TurnTimerHandle);
+}
+
+void ANBGameStateBase::GameStartTimer(int SetTimerValue)
+{
+	if (HasAuthority() && !GetWorldTimerManager().IsTimerActive(GameStartTimerHandle))
+	{
+		GetWorldTimerManager().SetTimer(GameStartTimerHandle, this, &ANBGameStateBase::OnGameStartTimer, SetTimerValue, false);
+	}
+}
+
+void ANBGameStateBase::GameEndTimer(int SetTimerValue)
+{
+	if (HasAuthority() && !GetWorldTimerManager().IsTimerActive(GameEndTimerHandle))
+	{
+		GetWorldTimerManager().SetTimer(GameEndTimerHandle, this, &ANBGameStateBase::OnGameEndTimer, SetTimerValue, false);
+	}
 }
 
 void ANBGameStateBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	DOREPLIFETIME(ThisClass, ServerTurnTimeLeft);
+	DOREPLIFETIME(ThisClass, TurnTimeLeft);
 }

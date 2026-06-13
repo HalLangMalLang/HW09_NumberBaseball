@@ -1,5 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
@@ -11,23 +9,39 @@ UCLASS()
 class NUMBERBASEBALL_API ANBGameStateBase : public AGameStateBase
 {
 	GENERATED_BODY()
-	
+
 public:
 	ANBGameStateBase();
 
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastRPCBroadcastLoginMessage(const FString& InNameString = FString(TEXT("xxxxx")));
 
-	UPROPERTY(ReplicatedUsing = OnRep_ServerRemainingTime)
-	int32 ServerTurnTimeLeft = 0;
+	// 턴 남은 시간(클라이언트 동기화)
+	UPROPERTY(ReplicatedUsing = OnRep_TurnTimeLeft)
+	int32 TurnTimeLeft = 0;
 
+	// 타이머 관리 (GameMode에서 호출)
+	void StartTurnTimer(int SetTimerValue);
+	void ClearTurnTimer();
+
+	void GameStartTimer(int SetTimerValue);
+	void GameEndTimer(int SetTimerValue);
+
+	// 플레이어 상태 관리(GameMode에서 호출)
 	void ResetPlayersCurrentCount();
-
-	UFUNCTION()
-	void OnRep_ServerRemainingTime();
-
-	void SetServerRemainingTime(int32 InRemainingTime);
 
 protected:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+private:
+	FTimerHandle TurnTimerHandle;
+	FTimerHandle GameStartTimerHandle;
+	FTimerHandle GameEndTimerHandle;
+
+	void OnTurnTimerTick();
+	void OnGameStartTimer();
+	void OnGameEndTimer();
+
+	UFUNCTION()
+	void OnRep_TurnTimeLeft();
 };
